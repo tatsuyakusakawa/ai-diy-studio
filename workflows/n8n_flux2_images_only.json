@@ -1,0 +1,267 @@
+{
+  "name": "FLUX.2 Klein | 15カット 画像生成 v4",
+  "nodes": [
+    {
+      "id": "n01",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 300],
+      "parameters": {}
+    },
+    {
+      "id": "n02",
+      "name": "Init State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ★カットのプロンプトを書いてください（最大15カット）\n// newScene: true → T2I（シーン切り替え）\n// newScene省略 → I2I（前カット参照）\nconst cuts = [\n  {\n    prompt: 'RAW photo, a small fox kit sitting in autumn leaves, golden hour lighting, shallow depth of field, hyperrealistic wildlife photography',\n    newScene: true\n  },\n  {\n    prompt: 'The same scene. Now the fox kit stands up and sniffs the air, ears perked forward.'\n  }\n];\nreturn [{ json: { cuts, index: 0 } }];"
+      }
+    },
+    {
+      "id": "n03",
+      "name": "Build Workflow",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const state = $input.first().json;\nconst { cuts, index } = state;\nconst cut = cuts[index];\nif (!cut) throw new Error(`index ${index} が範囲外 (total: ${cuts.length})`);\n\nconst isT2I = (index === 0) || !!cut.newScene;\nconst prevFilename = isT2I ? null : `cut_${String(index).padStart(2, '0')}.png`;\nif (!isT2I && !prevFilename) throw new Error(`cut${index+1}: 前ファイル名なし`);\n\nconst seed = Math.floor(Math.random() * 999999999999);\nconst wf = {};\nif (isT2I) {\n  wf['77:61'] = { inputs: { sampler_name: 'euler' }, class_type: 'KSamplerSelect' };\n  wf['77:62'] = { inputs: { steps: 6, width: 720, height: 1280 }, class_type: 'Flux2Scheduler' };\n  wf['77:63'] = { inputs: { cfg: 1, model: ['77:70', 0], positive: ['77:74', 0], negative: ['77:76', 0] }, class_type: 'CFGGuider' };\n  wf['77:64'] = { inputs: { noise: ['77:73', 0], guider: ['77:63', 0], sampler: ['77:61', 0], sigmas: ['77:62', 0], latent_image: ['77:66', 0] }, class_type: 'SamplerCustomAdvanced' };\n  wf['77:65'] = { inputs: { samples: ['77:64', 0], vae: ['77:72', 0] }, class_type: 'VAEDecode' };\n  wf['77:66'] = { inputs: { width: 720, height: 1280, batch_size: 1 }, class_type: 'EmptyFlux2LatentImage' };\n  wf['77:70'] = { inputs: { unet_name: 'flux-2-klein-9b.safetensors', weight_dtype: 'default' }, class_type: 'UNETLoader' };\n  wf['77:71'] = { inputs: { clip_name: 'qwen_3_8b.safetensors', type: 'flux2', device: 'default' }, class_type: 'CLIPLoader' };\n  wf['77:72'] = { inputs: { vae_name: 'flux2-vae.safetensors' }, class_type: 'VAELoader' };\n  wf['77:73'] = { inputs: { noise_seed: seed }, class_type: 'RandomNoise' };\n  wf['77:74'] = { inputs: { text: cut.prompt, clip: ['77:71', 0] }, class_type: 'CLIPTextEncode' };\n  wf['77:76'] = { inputs: { conditioning: ['77:74', 0] }, class_type: 'ConditioningZeroOut' };\n  wf['78']    = { inputs: { filename_prefix: 'Flux2-Klein-T2I', images: ['77:65', 0] }, class_type: 'SaveImage' };\n} else {\n  // Kontext I2I: ReferenceLatentでキャラ一貫性を保ちながら新シーン生成\n  wf['76']       = { inputs: { image: prevFilename }, class_type: 'LoadImage' };\n  wf['75:80']    = { inputs: { upscale_method: 'nearest-exact', megapixels: 1, resolution_steps: 1, image: ['76', 0] }, class_type: 'ImageScaleToTotalPixels' };\n  wf['75:81']    = { inputs: { image: ['75:80', 0] }, class_type: 'GetImageSize' };\n  wf['75:66']    = { inputs: { width: ['75:81', 0], height: ['75:81', 1], batch_size: 1 }, class_type: 'EmptyFlux2LatentImage' };\n  wf['75:79:78'] = { inputs: { pixels: ['75:80', 0], vae: ['75:72', 0] }, class_type: 'VAEEncode' };\n  wf['75:74']    = { inputs: { text: cut.prompt, clip: ['75:71', 0] }, class_type: 'CLIPTextEncode' };\n  wf['75:82']    = { inputs: { conditioning: ['75:74', 0] }, class_type: 'ConditioningZeroOut' };\n  wf['75:79:77'] = { inputs: { conditioning: ['75:74', 0], latent: ['75:79:78', 0] }, class_type: 'ReferenceLatent' };\n  wf['75:79:76'] = { inputs: { conditioning: ['75:82', 0], latent: ['75:79:78', 0] }, class_type: 'ReferenceLatent' };\n  wf['75:61']    = { inputs: { sampler_name: 'euler' }, class_type: 'KSamplerSelect' };\n  wf['75:62']    = { inputs: { steps: 6, width: ['75:81', 0], height: ['75:81', 1] }, class_type: 'Flux2Scheduler' };\n  wf['75:63']    = { inputs: { cfg: 1, model: ['75:70', 0], positive: ['75:79:77', 0], negative: ['75:79:76', 0] }, class_type: 'CFGGuider' };\n  wf['75:73']    = { inputs: { noise_seed: seed }, class_type: 'RandomNoise' };\n  wf['75:64']    = { inputs: { noise: ['75:73', 0], guider: ['75:63', 0], sampler: ['75:61', 0], sigmas: ['75:62', 0], latent_image: ['75:66', 0] }, class_type: 'SamplerCustomAdvanced' };\n  wf['75:70']    = { inputs: { unet_name: 'flux-2-klein-9b.safetensors', weight_dtype: 'default' }, class_type: 'UNETLoader' };\n  wf['75:71']    = { inputs: { clip_name: 'qwen_3_8b.safetensors', type: 'flux2', device: 'default' }, class_type: 'CLIPLoader' };\n  wf['75:72']    = { inputs: { vae_name: 'flux2-vae.safetensors' }, class_type: 'VAELoader' };\n  wf['75:65']    = { inputs: { samples: ['75:64', 0], vae: ['75:72', 0] }, class_type: 'VAEDecode' };\n  wf['9']        = { inputs: { filename_prefix: 'Flux2-Klein-Kontext', images: ['75:65', 0] }, class_type: 'SaveImage' };\n}\n// workflowのみ返す（stateはSave StateノードでBuild Workflowから再取得）\nreturn [{ json: { cuts, index, workflow: wf } }];"
+      }
+    },
+    {
+      "id": "n04",
+      "name": "Submit Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8188/prompt",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "prompt",
+              "value": "={{ $json.workflow }}"
+            },
+            {
+              "name": "client_id",
+              "value": "n8n"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n05",
+      "name": "Save State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Submit ImageのレスポンスからPrompt IDを取得\nconst promptId = $input.first().json.prompt_id;\nif (!promptId) throw new Error('prompt_idが取得できません: ' + JSON.stringify($input.first().json));\n// Build WorkflowノードからStateを復元（最新実行の結果）\nconst { cuts, index } = $('Build Workflow').first().json;\nreturn [{ json: { cuts, index, prompt_id: promptId } }];"
+      }
+    },
+    {
+      "id": "n06",
+      "name": "Poll History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'http://host.docker.internal:8188/history/' + $json.prompt_id }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "n07",
+      "name": "Check Done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const history = $input.first().json;\n// Save StateノードからStateを復元（最新実行の結果）\nconst state = $('Save State').first().json;\nconst { prompt_id, cuts, index } = state;\n\nconst entry = history[prompt_id];\nif (!entry?.status?.completed) {\n  return [{ json: { ...state, done: false } }];\n}\n\nconst outputs = entry.outputs;\nconst nodeKey = Object.keys(outputs)[0];\nconst img = outputs[nodeKey]?.images?.[0];\nif (!img) throw new Error('cut' + (index + 1) + ': outputs内に画像なし');\n\nreturn [{ json: { ...state, done: true, filename: img.filename, subfolder: img.subfolder || '' } }];"
+      }
+    },
+    {
+      "id": "n08",
+      "name": "Is Done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, 300],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.done }}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n09",
+      "name": "Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1540, 550],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 30,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "n10",
+      "name": "Download Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'http://host.docker.internal:8188/view?filename=' + $json.filename + '&subfolder=' + $json.subfolder + '&type=output' }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "n10b",
+      "name": "Rename Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first();\nconst { index } = $('Check Done').first().json;\nconst filename = `cut_${String(index + 1).padStart(2, '0')}.png`;\nreturn [{\n  json: item.json,\n  binary: {\n    data: {\n      ...item.binary.data,\n      fileName: filename,\n      mimeType: 'image/png'\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "n11",
+      "name": "Upload Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1980, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8188/upload/image",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "image",
+              "parameterType": "formBinaryData",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "type",
+              "value": "input"
+            },
+            {
+              "name": "overwrite",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n12",
+      "name": "Update State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const { cuts, index } = $('Check Done').first().json;\nreturn [{ json: { cuts, index: index + 1 } }];"
+      }
+    },
+    {
+      "id": "n13",
+      "name": "More Cuts?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2420, 300],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.index }}",
+              "operation": "smaller",
+              "value2": "={{ $json.cuts.length }}"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [[{"node": "Init State", "type": "main", "index": 0}]]
+    },
+    "Init State": {
+      "main": [[{"node": "Build Workflow", "type": "main", "index": 0}]]
+    },
+    "Build Workflow": {
+      "main": [[{"node": "Submit Image", "type": "main", "index": 0}]]
+    },
+    "Submit Image": {
+      "main": [[{"node": "Save State", "type": "main", "index": 0}]]
+    },
+    "Save State": {
+      "main": [[{"node": "Poll History", "type": "main", "index": 0}]]
+    },
+    "Poll History": {
+      "main": [[{"node": "Check Done", "type": "main", "index": 0}]]
+    },
+    "Check Done": {
+      "main": [[{"node": "Is Done?", "type": "main", "index": 0}]]
+    },
+    "Is Done?": {
+      "main": [
+        [{"node": "Download Image", "type": "main", "index": 0}],
+        [{"node": "Wait 30s", "type": "main", "index": 0}]
+      ]
+    },
+    "Wait 30s": {
+      "main": [[{"node": "Poll History", "type": "main", "index": 0}]]
+    },
+    "Download Image": {
+      "main": [[{"node": "Rename Binary", "type": "main", "index": 0}]]
+    },
+    "Rename Binary": {
+      "main": [[{"node": "Upload Image", "type": "main", "index": 0}]]
+    },
+    "Upload Image": {
+      "main": [[{"node": "Update State", "type": "main", "index": 0}]]
+    },
+    "Update State": {
+      "main": [[{"node": "More Cuts?", "type": "main", "index": 0}]]
+    },
+    "More Cuts?": {
+      "main": [
+        [{"node": "Build Workflow", "type": "main", "index": 0}],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

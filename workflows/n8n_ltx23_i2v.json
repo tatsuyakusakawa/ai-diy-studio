@@ -1,0 +1,164 @@
+{
+  "name": "LTX-2.3 I2V | 動画生成",
+  "nodes": [
+    {
+      "id": "n01",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 300],
+      "parameters": {}
+    },
+    {
+      "id": "n02",
+      "name": "Init State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ★各カットの画像ファイル名とモーションプロンプトを設定してください\n// imageFile: ComfyUIのinputフォルダにアップロード済みの画像ファイル名\n// motion: そのカットの動きの説明（LTX-2.3に渡すプロンプト）\n// ★各カットのモーションプロンプトを設定してください\n// imageFileはFLUX.2ワークフローが自動生成したcut_01.png〜を使用\nconst cuts = [\n  {\n    motion: 'The mother mallard duck struggles under the net, wings flapping frantically. Heavy snow falls. Static camera.'\n  },\n  {\n    motion: 'A hand reaches into frame and lifts the net. The duck pauses, then slowly waddles free. Static camera.'\n  }\n];\nreturn [{ json: { cuts, index: 0 } }];"
+      }
+    },
+    {
+      "id": "n03",
+      "name": "Build Video Workflow",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const state = $input.first().json;\nconst { cuts, index } = state;\nconst cut = cuts[index];\nif (!cut) throw new Error(`index ${index} が範囲外 (total: ${cuts.length})`);\n\nconst { motion } = cut;\nconst imageFile = `cut_${String(index + 1).padStart(2, '0')}.png`;\nconst seed = Math.floor(Math.random() * 999999999999);\n\nconst wf = {\n  '100': { inputs: { sigmas: '0.909375, 0.421875, 0.0' }, class_type: 'ManualSigmas' },\n  '103': { inputs: { cfg: 1, model: ['207', 0], positive: ['107', 0], negative: ['107', 1] }, class_type: 'CFGGuider' },\n  '107': { inputs: { frame_rate: 25, positive: ['121', 0], negative: ['110', 0] }, class_type: 'LTXVConditioning' },\n  '108': { inputs: { width: ['163', 0], height: ['163', 1], length: ['187', 0], batch_size: 1 }, class_type: 'EmptyLTXVLatentVideo' },\n  '109': { inputs: { video_latent: ['161', 0], audio_latent: ['199', 0] }, class_type: 'LTXVConcatAVLatent' },\n  '110': { inputs: { text: '', clip: ['190', 0] }, class_type: 'CLIPTextEncode' },\n  '113': { inputs: { noise: ['115', 0], guider: ['129', 0], sampler: ['137', 0], sigmas: ['206', 0], latent_image: ['109', 0] }, class_type: 'SamplerCustomAdvanced' },\n  '114': { inputs: { noise_seed: seed }, class_type: 'RandomNoise' },\n  '115': { inputs: { noise_seed: seed + 1 }, class_type: 'RandomNoise' },\n  '116': { inputs: { av_latent: ['113', 0] }, class_type: 'LTXVSeparateAVLatent' },\n  '117': { inputs: { video_latent: ['160', 0], audio_latent: ['116', 1] }, class_type: 'LTXVConcatAVLatent' },\n  '118': { inputs: { samples: ['116', 0], upscale_model: ['189', 0], vae: ['184', 0] }, class_type: 'LTXVLatentUpsampler' },\n  '119': { inputs: { noise: ['114', 0], guider: ['103', 0], sampler: ['138', 0], sigmas: ['100', 0], latent_image: ['117', 0] }, class_type: 'SamplerCustomAdvanced' },\n  '121': { inputs: { text: motion, clip: ['190', 0] }, class_type: 'CLIPTextEncode' },\n  '125': { inputs: { av_latent: ['119', 1] }, class_type: 'LTXVSeparateAVLatent' },\n  '127': { inputs: { tile_size: 512, overlap: 64, temporal_size: 512, temporal_overlap: 64, samples: ['125', 0], vae: ['184', 0] }, class_type: 'VAEDecodeTiled' },\n  '129': { inputs: { cfg: 1, model: ['207', 0], positive: ['107', 0], negative: ['107', 1] }, class_type: 'CFGGuider' },\n  '137': { inputs: { sampler_name: 'euler_ancestral' }, class_type: 'KSamplerSelect' },\n  '138': { inputs: { sampler_name: 'euler_ancestral' }, class_type: 'KSamplerSelect' },\n  '140': { inputs: { frame_rate: 25, loop_count: 0, filename_prefix: 'LTX23-cut' + String(index + 1).padStart(2, '0'), format: 'video/h264-mp4', pix_fmt: 'yuv420p', crf: 19, save_metadata: false, trim_to_audio: false, pingpong: false, save_output: true, images: ['127', 0], audio: ['201', 0] }, class_type: 'VHS_VideoCombine' },\n  '160': { inputs: { strength: 1, bypass: false, vae: ['184', 0], image: ['162', 0], latent: ['118', 0] }, class_type: 'LTXVImgToVideoConditionOnly' },\n  '161': { inputs: { strength: 0.6, bypass: false, vae: ['184', 0], image: ['162', 0], latent: ['108', 0] }, class_type: 'LTXVImgToVideoConditionOnly' },\n  '162': { inputs: { img_compression: 55, image: ['246', 0] }, class_type: 'LTXVPreprocess' },\n  '163': { inputs: { image: ['164', 0] }, class_type: 'GetImageSize' },\n  '164': { inputs: { resize_type: 'scale by multiplier', 'resize_type.multiplier': 0.5, scale_method: 'area', input: ['165', 0] }, class_type: 'ResizeImageMaskNode' },\n  '165': { inputs: { width: ['194', 0], height: ['195', 0], upscale_method: 'nearest-exact', keep_proportion: 'crop', pad_color: '0, 0, 0', crop_position: 'center', divisible_by: 32, device: 'gpu', image: ['167', 0] }, class_type: 'ImageResizeKJv2' },\n  '167': { inputs: { image: imageFile }, class_type: 'LoadImage' },\n  '184': { inputs: { vae_name: 'LTX23_video_vae_bf16.safetensors' }, class_type: 'VAELoader' },\n  '187': { inputs: { value: 97 }, class_type: 'INTConstant' },\n  '189': { inputs: { model_name: 'ltx-2.3-spatial-upscaler-x2-1.0.safetensors' }, class_type: 'LatentUpscaleModelLoader' },\n  '190': { inputs: { clip_name1: 'gemma-3-12b-it-qat-UD-Q4_K_XL.gguf', clip_name2: 'ltx-2.3_text_projection_bf16.safetensors', type: 'ltxv' }, class_type: 'DualCLIPLoaderGGUF' },\n  '194': { inputs: { value: 720 }, class_type: 'INTConstant' },\n  '195': { inputs: { value: 1280 }, class_type: 'INTConstant' },\n  '196': { inputs: { ckpt_name: 'LTX23_audio_vae_bf16.safetensors' }, class_type: 'LTXVAudioVAELoader' },\n  '197': { inputs: { unet_name: 'ltx-2.3-22b-distilled-Q5_K_M.gguf' }, class_type: 'UnetLoaderGGUF' },\n  '199': { inputs: { frames_number: ['187', 0], frame_rate: 25, batch_size: 1, audio_vae: ['196', 0] }, class_type: 'LTXVEmptyLatentAudio' },\n  '201': { inputs: { samples: ['125', 1], audio_vae: ['196', 0] }, class_type: 'LTXVAudioVAEDecode' },\n  '206': { inputs: { steps: 6, max_shift: 2.05, base_shift: 0.95, stretch: true, terminal: 0.1, latent: ['109', 0] }, class_type: 'LTXVScheduler' },\n  '207': { inputs: { chunks: 4, dim_threshold: 4096, model: ['197', 0] }, class_type: 'LTXVChunkFeedForward' },\n  '246': { inputs: { longer_edge: 1344, images: ['165', 0] }, class_type: 'ResizeImagesByLongerEdge' }\n};\n\nreturn [{ json: { cuts, index, workflow: wf } }];"
+      }
+    },
+    {
+      "id": "n04",
+      "name": "Submit Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8188/prompt",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "prompt", "value": "={{ $json.workflow }}" },
+            { "name": "client_id", "value": "n8n" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n05",
+      "name": "Save Submit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const promptId = $input.first().json.prompt_id;\nif (!promptId) throw new Error('prompt_id取得失敗: ' + JSON.stringify($input.first().json));\nconst { cuts, index } = $('Build Video Workflow').first().json;\nreturn [{ json: { cuts, index, prompt_id: promptId } }];"
+      }
+    },
+    {
+      "id": "n06",
+      "name": "Poll History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'http://host.docker.internal:8188/history/' + $json.prompt_id }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "n07",
+      "name": "Check Done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const history = $input.first().json;\nconst state = $('Save Submit').first().json;\nconst { prompt_id, cuts, index } = state;\n\nconst entry = history[prompt_id];\nif (!entry?.status?.completed) {\n  return [{ json: { ...state, done: false } }];\n}\n\nreturn [{ json: { ...state, done: true } }];"
+      }
+    },
+    {
+      "id": "n08",
+      "name": "Is Done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, 300],
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{ $json.done }}", "value2": true }]
+        }
+      }
+    },
+    {
+      "id": "n09",
+      "name": "Wait 2min",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1540, 550],
+      "parameters": { "resume": "timeInterval", "amount": 2, "unit": "minutes" }
+    },
+    {
+      "id": "n10",
+      "name": "Update State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const { cuts, index } = $input.first().json;\nreturn [{ json: { cuts, index: index + 1 } }];"
+      }
+    },
+    {
+      "id": "n11",
+      "name": "More Cuts?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1980, 300],
+      "parameters": {
+        "conditions": {
+          "number": [{ "value1": "={{ $json.index }}", "operation": "smaller", "value2": "={{ $json.cuts.length }}" }]
+        }
+      }
+    },
+    {
+      "id": "n12",
+      "name": "All Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2200, 300],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Start":                { "main": [[{ "node": "Init State",           "type": "main", "index": 0 }]] },
+    "Init State":           { "main": [[{ "node": "Build Video Workflow", "type": "main", "index": 0 }]] },
+    "Build Video Workflow": { "main": [[{ "node": "Submit Video",         "type": "main", "index": 0 }]] },
+    "Submit Video":         { "main": [[{ "node": "Save Submit",          "type": "main", "index": 0 }]] },
+    "Save Submit":          { "main": [[{ "node": "Poll History",         "type": "main", "index": 0 }]] },
+    "Poll History":         { "main": [[{ "node": "Check Done",           "type": "main", "index": 0 }]] },
+    "Check Done":           { "main": [[{ "node": "Is Done?",             "type": "main", "index": 0 }]] },
+    "Is Done?": {
+      "main": [
+        [{ "node": "Update State", "type": "main", "index": 0 }],
+        [{ "node": "Wait 2min",    "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 2min":    { "main": [[{ "node": "Poll History",         "type": "main", "index": 0 }]] },
+    "Update State": { "main": [[{ "node": "More Cuts?",           "type": "main", "index": 0 }]] },
+    "More Cuts?": {
+      "main": [
+        [{ "node": "Build Video Workflow", "type": "main", "index": 0 }],
+        [{ "node": "All Done",             "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}
